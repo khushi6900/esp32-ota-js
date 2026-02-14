@@ -1,0 +1,16 @@
+{
+  "name": "esp32-ota-server",
+  "version": "1.0.0",
+  "description": "ESP32 OTA Update Server for Vercel",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node index.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  },
+  "engines": {
+    "node": ">=18.x"
+  }
+}
