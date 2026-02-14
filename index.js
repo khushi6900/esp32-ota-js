@@ -5,8 +5,7 @@
 
 const express = require('express');
 const crypto = require('crypto');
-const fs = require('fs');
-const path = require('path');
+const https = require('https');
 
 const app = express();
 app.use(express.json());
@@ -14,6 +13,11 @@ app.use(express.json());
 // ========================================
 // CONFIGURATION
 // ========================================
+
+// S3 Public Bucket Configuration
+const S3_BUCKET = 'esp32--firmware';
+const S3_REGION = 'us-east-1'; // Change to your bucket's region
+const S3_BASE_URL = `https://${S3_BUCKET}.s3.${S3_REGION}.amazonaws.com`;
 
 // Store registered devices and their versions (in-memory)
 const devicesDb = {};
@@ -30,15 +34,12 @@ const AVAILABLE_FIRMWARE = {
     filename: "sketch_feb14a_v2_3.ino.bin",
     release_date: "2026-02-14",
     changelog: "Updated version",
-    mandatory: false
+    mandatory: true
   }
 };
 
 // Security - Simple API Key
 const VALID_API_KEYS = new Set(["test123", "prod456"]);
-
-// Firmware directory
-const FIRMWARE_DIR = path.join(__dirname, 'firmware');
 
 // ========================================
 // MIDDLEWARE
@@ -70,16 +71,49 @@ const verifyApiKey = (req, res, next) => {
 // UTILITY FUNCTIONS
 // ========================================
 
-function calculateMd5(filepath) {
-  const fileBuffer = fs.readFileSync(filepath);
-  const hashSum = crypto.createHash('md5');
-  hashSum.update(fileBuffer);
-  return hashSum.digest('hex');
+// Get S3 public URL
+function getS3Url(filename) {
+  return `${S3_BASE_URL}/${filename}`;
 }
 
-function getFileSize(filepath) {
-  const stats = fs.statSync(filepath);
-  return stats.size;
+// Check if S3 file exists and get metadata
+async function checkS3File(filename) {
+  return new Promise((resolve) => {
+    const url = getS3Url(filename);
+    
+    https.get(url, { method: 'HEAD' }, (res) => {
+      if (res.statusCode === 200) {
+        resolve({
+          exists: true,
+          size: parseInt(res.headers['content-length'] || '0'),
+          etag: res.headers['etag']?.replace(/"/g, '')
+        });
+      } else {
+        resolve({ exists: false });
+      }
+    }).on('error', () => {
+      resolve({ exists: false });
+    });
+  });
+}
+
+// Calculate MD5 from S3 file
+async function calculateS3Md5(filename) {
+  return new Promise((resolve, reject) => {
+    const url = getS3Url(filename);
+    
+    https.get(url, (res) => {
+      if (res.statusCode !== 200) {
+        reject(new Error(`Failed to fetch file: ${res.statusCode}`));
+        return;
+      }
+      
+      const hash = crypto.createHash('md5');
+      res.on('data', (chunk) => hash.update(chunk));
+      res.on('end', () => resolve(hash.digest('hex')));
+      res.on('error', reject);
+    }).on('error', reject);
+  });
 }
 
 // ========================================
@@ -107,7 +141,7 @@ app.get('/health', (req, res) => {
   });
 });
 
-app.get('/api/v1/firmware/check', verifyApiKey, (req, res) => {
+app.get('/api/v1/firmware/check', verifyApiKey, async (req, res) => {
   const { device, version, model = "ESP32", rssi } = req.query;
   
   if (!device || !version) {
@@ -147,45 +181,46 @@ app.get('/api/v1/firmware/check', verifyApiKey, (req, res) => {
     });
   }
   
-  // Prepare firmware file path
-  const firmwarePath = path.join(FIRMWARE_DIR, latestInfo.filename);
-  
-  // Check if file exists
-  if (!fs.existsSync(firmwarePath)) {
-    console.log(`ERROR: Firmware file not found: ${firmwarePath}`);
+  try {
+    // Check if file exists in S3
+    const metadata = await checkS3File(latestInfo.filename);
+    
+    if (!metadata.exists) {
+      console.log(`ERROR: Firmware file not found in S3: ${latestInfo.filename}`);
+      console.log('===================\n');
+      return res.status(404).json({ detail: "Firmware file not found" });
+    }
+    
+    // Calculate checksum
+    const checksum = await calculateS3Md5(latestInfo.filename);
+    
+    // Generate direct S3 URL
+    const downloadUrl = getS3Url(latestInfo.filename);
+    
+    console.log('Update AVAILABLE for device!');
+    console.log(`Latest version: v${latestVersion}`);
+    console.log(`Download URL: ${downloadUrl}`);
+    console.log(`File size: ${metadata.size} bytes`);
+    console.log(`MD5: ${checksum}`);
+    console.log(`Mandatory: ${latestInfo.mandatory}`);
     console.log('===================\n');
-    return res.status(404).json({ detail: "Firmware file not found" });
+    
+    res.json({
+      update_available: true,
+      latest_version: latestVersion,
+      download_url: downloadUrl,
+      checksum: checksum,
+      mandatory: latestInfo.mandatory,
+      changelog: latestInfo.changelog,
+      file_size: metadata.size
+    });
+  } catch (error) {
+    console.error('Error processing firmware check:', error);
+    return res.status(500).json({ detail: "Internal server error" });
   }
-  
-  // Calculate checksum and file size
-  const checksum = calculateMd5(firmwarePath);
-  const fileSize = getFileSize(firmwarePath);
-  
-  // Generate download URL
-  const protocol = req.headers['x-forwarded-proto'] || 'http';
-  const host = req.headers['x-forwarded-host'] || req.headers.host;
-  const downloadUrl = `${protocol}://${host}/api/v1/firmware/download/${latestVersion}`;
-  
-  console.log('Update AVAILABLE for device!');
-  console.log(`Latest version: v${latestVersion}`);
-  console.log(`Download URL: ${downloadUrl}`);
-  console.log(`File size: ${fileSize} bytes`);
-  console.log(`MD5: ${checksum}`);
-  console.log(`Mandatory: ${latestInfo.mandatory}`);
-  console.log('===================\n');
-  
-  res.json({
-    update_available: true,
-    latest_version: latestVersion,
-    download_url: downloadUrl,
-    checksum: checksum,
-    mandatory: latestInfo.mandatory,
-    changelog: latestInfo.changelog,
-    file_size: fileSize
-  });
 });
 
-app.get('/api/v1/firmware/download/:version', verifyApiKey, (req, res) => {
+app.get('/api/v1/firmware/download/:version', verifyApiKey, async (req, res) => {
   const { version } = req.params;
   
   console.log('\n=== FIRMWARE DOWNLOAD ===');
@@ -198,20 +233,29 @@ app.get('/api/v1/firmware/download/:version', verifyApiKey, (req, res) => {
   }
   
   const firmwareInfo = AVAILABLE_FIRMWARE[version];
-  const firmwarePath = path.join(FIRMWARE_DIR, firmwareInfo.filename);
   
-  if (!fs.existsSync(firmwarePath)) {
-    console.log(`ERROR: File not found: ${firmwarePath}`);
-    return res.status(404).json({ detail: "Firmware file not found" });
+  try {
+    // Check if file exists in S3
+    const metadata = await checkS3File(firmwareInfo.filename);
+    
+    if (!metadata.exists) {
+      console.log(`ERROR: File not found in S3: ${firmwareInfo.filename}`);
+      return res.status(404).json({ detail: "Firmware file not found" });
+    }
+    
+    // Get direct S3 URL and redirect
+    const downloadUrl = getS3Url(firmwareInfo.filename);
+    
+    console.log(`Redirecting to S3: ${firmwareInfo.filename}`);
+    console.log(`File size: ${metadata.size} bytes`);
+    console.log('===================\n');
+    
+    // Redirect to S3 public URL
+    res.redirect(downloadUrl);
+  } catch (error) {
+    console.error('Error generating download URL:', error);
+    return res.status(500).json({ detail: "Internal server error" });
   }
-  
-  console.log(`Serving file: ${firmwareInfo.filename}`);
-  console.log(`File size: ${getFileSize(firmwarePath)} bytes`);
-  console.log('===================\n');
-  
-  res.setHeader('Content-Type', 'application/octet-stream');
-  res.setHeader('Content-Disposition', `attachment; filename="${firmwareInfo.filename}"`);
-  res.sendFile(firmwarePath);
 });
 
 app.get('/admin/devices', verifyApiKey, (req, res) => {
@@ -221,7 +265,7 @@ app.get('/admin/devices', verifyApiKey, (req, res) => {
   });
 });
 
-app.post('/admin/firmware/release', verifyApiKey, (req, res) => {
+app.post('/admin/firmware/release', verifyApiKey, async (req, res) => {
   const { version, filename, changelog, mandatory = false } = req.body;
   
   if (!version || !filename || !changelog) {
@@ -232,23 +276,31 @@ app.post('/admin/firmware/release', verifyApiKey, (req, res) => {
     return res.status(400).json({ detail: "Version already exists" });
   }
   
-  const firmwarePath = path.join(FIRMWARE_DIR, filename);
-  if (!fs.existsSync(firmwarePath)) {
-    return res.status(404).json({ detail: "Firmware file not found" });
+  try {
+    // Check if file exists in S3
+    const metadata = await checkS3File(filename);
+    
+    if (!metadata.exists) {
+      return res.status(404).json({ detail: "Firmware file not found in S3" });
+    }
+    
+    AVAILABLE_FIRMWARE[version] = {
+      filename,
+      release_date: new Date().toISOString().split('T')[0],
+      changelog,
+      mandatory
+    };
+    
+    res.json({
+      status: "success",
+      message: `Firmware v${version} released`,
+      version,
+      file_size: metadata.size
+    });
+  } catch (error) {
+    console.error('Error releasing firmware:', error);
+    return res.status(500).json({ detail: "Internal server error" });
   }
-  
-  AVAILABLE_FIRMWARE[version] = {
-    filename,
-    release_date: new Date().toISOString().split('T')[0],
-    changelog,
-    mandatory
-  };
-  
-  res.json({
-    status: "success",
-    message: `Firmware v${version} released`,
-    version
-  });
 });
 
 // ========================================
