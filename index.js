@@ -38,7 +38,7 @@ const AVAILABLE_FIRMWARE = {
 const VALID_API_KEYS = new Set(["test123", "prod456"]);
 
 // Firmware directory
-const FIRMWARE_DIR = path.join(__dirname, '../firmware');
+const FIRMWARE_DIR = path.join(__dirname, 'firmware');
 
 // ========================================
 // MIDDLEWARE
