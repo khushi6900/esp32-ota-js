@@ -16,7 +16,7 @@ app.use(express.json());
 
 // S3 Public Bucket Configuration
 const S3_BUCKET = 'esp32--firmware';
-const S3_REGION = 'us-east-1'; // Change to your bucket's region
+const S3_REGION = 'us-east-1';
 const S3_BASE_URL = `https://${S3_BUCKET}.s3.${S3_REGION}.amazonaws.com`;
 
 // Store registered devices and their versions (in-memory)
