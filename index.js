@@ -35,6 +35,12 @@ const AVAILABLE_FIRMWARE = {
     release_date: "2026-02-14",
     changelog: "Updated version",
     mandatory: true
+  },
+  "3.1.0": {
+    filename: "sketch_feb16_3_1.ino.esp32.bin",
+    release_date: "2026-02-16",
+    changelog: "New features and improvements",
+    mandatory: false
   }
 };
 
