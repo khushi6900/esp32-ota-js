@@ -15,7 +15,7 @@ app.use(express.json());
 // ========================================
 
 // S3 Public Bucket Configuration
-const S3_BUCKET = 'esp32--firmware';
+const S3_BUCKET = 'khushiesp';
 const S3_REGION = 'us-east-1';
 const S3_BASE_URL = `https://${S3_BUCKET}.s3.${S3_REGION}.amazonaws.com`;
 
@@ -24,22 +24,10 @@ const devicesDb = {};
 
 // Firmware versions available
 const AVAILABLE_FIRMWARE = {
-  "2.2.0": {
-    filename: "meril_01.ino.esp32_v2_2.bin",
-    release_date: "2026-01-15",
+  "2.2.2": {
+    filename: "sketch_feb_16b.ino.bin",
+    release_date: "2026-03-15",
     changelog: "Initial release",
-    mandatory: false
-  },
-  "2.3.0": {
-    filename: "sketch_feb14a_v2_3.ino.bin",
-    release_date: "2026-02-14",
-    changelog: "Updated version",
-    mandatory: true
-  },
-  "3.1.0": {
-    filename: "sketch_feb16_3_1.ino.esp32.bin",
-    release_date: "2026-02-16",
-    changelog: "New features and improvements",
     mandatory: false
   }
 };

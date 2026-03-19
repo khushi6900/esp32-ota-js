@@ -3,3 +3,8 @@ node_modules/
 .vercel
 *.log
 .DS_Store
+sketch_feb14b_v2.2.ino
+esp32_ota_v2.ino
+esp32_ota_v2_rollback.ino
+ESP32_SKETCH_DOCUMENTATION.md
+INDEX_JS_DOCUMENTATION.md
